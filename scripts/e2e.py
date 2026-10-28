@@ -225,6 +225,18 @@ def main():
     status, audio, _ = request("GET", f"/api/jobs/{cached['id']}/download", token=token)
     check(status == 200 and audio[:3] == b"ID3", "la copia de cache sigue descargable")
 
+    step("Limite de conversiones activas por usuario")
+    batch = signup(f"lote-{run_id}@example.com")
+    statuses, created = [], []
+    for bitrate in ("64", "96", "128", "160", "192", "256"):  # opciones distintas: sin cache
+        status, body = upload(batch, video, "lote.mkv", bitrate=bitrate, normalize="1")
+        statuses.append(status)
+        if status == 202:
+            created.append(body["id"])
+    check(statuses == [202] * 5 + [429], f"5 aceptadas y la sexta rechazada {statuses}")
+    for job_id in created:
+        request("POST", f"/api/jobs/{job_id}/cancel", token=batch)
+
     step("Video sin audio -> error permanente sin reintentos")
     status, bad = upload(token, mute, "mudo.mkv")
     check(status == 202, "encolado")
