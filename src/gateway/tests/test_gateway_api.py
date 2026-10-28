@@ -162,3 +162,60 @@ def test_events_stream_until_done(client, deps, ana, upload):
 def test_events_for_foreign_job(client, ana, beto, upload):
     job = upload(ana).json
     assert client.get(f"/api/jobs/{job['id']}/events", headers=beto).status_code == 404
+
+
+def test_cancel_queued_job(client, deps, ana, upload):
+    job = upload(ana).json
+    resp = client.post(f"/api/jobs/{job['id']}/cancel", headers=ana)
+    assert resp.status_code == 200
+    assert resp.json["status"] == "canceled"
+    assert deps["storage"].videos == {}  # el video se libera enseguida
+
+
+def test_cancel_processing_job_is_requested(client, deps, ana, upload):
+    job = upload(ana).json
+    deps["jobs"].update(job["id"], status="processing", progress=30.0)
+    resp = client.post(f"/api/jobs/{job['id']}/cancel", headers=ana)
+    assert resp.status_code == 202
+    assert resp.json["status"] == "processing"
+    assert resp.json["canceling"] is True
+    assert deps["storage"].videos != {}  # lo borra el converter al detener ffmpeg
+
+
+def test_cancel_finished_or_foreign_job(client, deps, ana, beto, upload):
+    job = upload(ana).json
+    assert client.post(f"/api/jobs/{job['id']}/cancel", headers=beto).status_code == 404
+    finish(deps, job["id"])
+    assert client.post(f"/api/jobs/{job['id']}/cancel", headers=ana).status_code == 409
+
+
+def test_canceled_job_ends_event_stream(client, deps, ana, upload):
+    job = upload(ana).json
+    client.post(f"/api/jobs/{job['id']}/cancel", headers=ana)
+    body = client.get(f"/api/jobs/{job['id']}/events", headers=ana).get_data(as_text=True)
+    assert '"status": "canceled"' in body
+
+
+def test_delete_job(client, deps, ana, beto, upload):
+    job = upload(ana).json
+    assert client.delete(f"/api/jobs/{job['id']}", headers=ana).status_code == 409  # activo
+    finish(deps, job["id"])
+    assert client.delete(f"/api/jobs/{job['id']}", headers=beto).status_code == 404
+
+    assert client.delete(f"/api/jobs/{job['id']}", headers=ana).status_code == 204
+    assert client.get(f"/api/jobs/{job['id']}", headers=ana).status_code == 404
+    assert deps["storage"].outputs == {}
+
+
+def test_delete_keeps_audio_shared_with_cached_jobs(client, deps, ana, beto, upload):
+    original = upload(ana, data=b"same").json
+    finish(deps, original["id"])
+    copy = upload(beto, data=b"same").json
+    assert copy["cached"] is True
+
+    client.delete(f"/api/jobs/{original['id']}", headers=ana)
+    assert len(deps["storage"].outputs) == 1  # beto todavia lo usa
+    assert client.get(f"/api/jobs/{copy['id']}/download", headers=beto).status_code == 200
+
+    client.delete(f"/api/jobs/{copy['id']}", headers=beto)
+    assert deps["storage"].outputs == {}  # ultimo en usarlo: se borra

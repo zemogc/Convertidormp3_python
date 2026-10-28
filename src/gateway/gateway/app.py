@@ -26,7 +26,8 @@ MIME_TYPES = {
     "flac": "audio/flac",
     "wav": "audio/wav",
 }
-FINAL_STATES = {"done", "failed"}
+FINAL_STATES = {"done", "failed", "canceled"}
+ACTIVE_STATES = {"queued", "processing"}
 _UNSAFE_NAME = re.compile(r"[^\w\-. ]+", re.UNICODE)
 
 
@@ -201,6 +202,37 @@ def create_app(
         job = owned_job(job_id)
         return jsonify(_public(job)) if job else error("trabajo no encontrado", 404)
 
+    @app.post("/api/jobs/<job_id>/cancel")
+    @require_auth
+    def cancel_job(job_id):
+        job = owned_job(job_id)
+        if not job:
+            return error("trabajo no encontrado", 404)
+        result = jobs.cancel(job_id)
+        if result is None:
+            return error("el trabajo ya termino", 409)
+        if result == "canceled" and job.get("video_fid"):
+            # Nadie lo va a procesar: el converter descarta trabajos cancelados.
+            storage.delete_video(job["video_fid"])
+            jobs.update(job_id, video_fid=None)
+        return jsonify(_public(jobs.get(job_id))), 202 if result == "canceling" else 200
+
+    @app.delete("/api/jobs/<job_id>")
+    @require_auth
+    def delete_job(job_id):
+        job = owned_job(job_id)
+        if not job:
+            return error("trabajo no encontrado", 404)
+        if job["status"] in ACTIVE_STATES:
+            return error("cancela el trabajo antes de borrarlo", 409)
+        jobs.delete(job_id)
+        if job.get("video_fid"):
+            storage.delete_video(job["video_fid"])
+        # El audio puede estar compartido con resultados de cache de otros trabajos.
+        if job.get("output_fid") and not jobs.output_in_use(job["output_fid"], job_id):
+            storage.delete_output(job["output_fid"])
+        return "", 204
+
     @app.get("/api/jobs/<job_id>/events")
     @require_auth
     def job_events(job_id):
@@ -217,7 +249,12 @@ def create_app(
                 if job is None:
                     return
                 snapshot = _public(job)
-                key = (snapshot["status"], snapshot["progress"], snapshot["error"])
+                key = (
+                    snapshot["status"],
+                    snapshot["progress"],
+                    snapshot["error"],
+                    snapshot["canceling"],
+                )
                 if key != last:
                     last = key
                     yield f"event: job\ndata: {json.dumps(snapshot)}\n\n"
@@ -291,6 +328,7 @@ def _public(job: dict) -> dict:
         "duration": job.get("duration"),
         "waveform": job.get("waveform"),
         "cached": job.get("cached", False),
+        "canceling": bool(job.get("cancel_requested")) and job["status"] == "processing",
         "error": job.get("error"),
         "created_at": job["created_at"].isoformat(),
         "updated_at": job["updated_at"].isoformat(),
