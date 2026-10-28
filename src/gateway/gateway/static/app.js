@@ -1,14 +1,14 @@
 "use strict";
 
 const $ = (sel) => document.querySelector(sel);
-const FINAL = new Set(["done", "failed"]);
+const FINAL = new Set(["done", "failed", "canceled"]);
 const TOKEN_KEY = "convertidor.token";
 
 const state = {
   token: load(TOKEN_KEY),
   formats: [],
   defaultBitrate: 192,
-  file: null,
+  files: [],
   watching: new Set(),
   blobs: new Map(),
 };
@@ -162,75 +162,104 @@ function updateBitrates() {
 }
 $("#format").addEventListener("change", updateBitrates);
 
-function setFile(file) {
-  state.file = file || null;
-  const zone = $("#dropzone");
-  zone.classList.toggle("has-file", !!file);
-  $("#drop-title").textContent = file ? file.name : "Arrastra un video aqui";
-  $("#drop-hint").textContent = file ? `${formatBytes(file.size)} · clic para cambiarlo` : "o haz clic para elegirlo";
-  $("#convert").disabled = !file;
+const MAX_PARALLEL_UPLOADS = 2;
+
+function setFiles(files) {
+  state.files = [...(files || [])];
+  const n = state.files.length;
+  const size = state.files.reduce((sum, f) => sum + f.size, 0);
+  $("#dropzone").classList.toggle("has-file", n > 0);
+  $("#drop-title").textContent =
+    n === 0 ? "Arrastra uno o varios videos aqui" : n === 1 ? state.files[0].name : `${n} archivos`;
+  $("#drop-hint").textContent = n ? `${formatBytes(size)} · clic para cambiar` : "o haz clic para elegirlos";
+  $("#convert").textContent = n > 1 ? `Convertir ${n} archivos` : "Convertir";
+  $("#convert").disabled = n === 0;
   $("#upload-error").textContent = "";
 }
 
 const zone = $("#dropzone");
-$("#file").addEventListener("change", (e) => setFile(e.target.files[0]));
+$("#file").addEventListener("change", (e) => setFiles(e.target.files));
 ["dragenter", "dragover"].forEach((ev) =>
   zone.addEventListener(ev, (e) => { e.preventDefault(); zone.classList.add("over"); }),
 );
 ["dragleave", "drop"].forEach((ev) =>
   zone.addEventListener(ev, (e) => { e.preventDefault(); zone.classList.remove("over"); }),
 );
-zone.addEventListener("drop", (e) => setFile(e.dataTransfer.files[0]));
+zone.addEventListener("drop", (e) => setFiles(e.dataTransfer.files));
 
-$("#upload-form").addEventListener("submit", (event) => {
+$("#upload-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (!state.file) return;
-  const form = new FormData(event.target);
-  form.set("file", state.file);
-  if (!form.get("bitrate")) form.delete("bitrate");
+  if (!state.files.length) return;
+  const options = new FormData(event.target);
+  options.delete("file");
+  if (!options.get("bitrate")) options.delete("bitrate");
 
-  // Tarjeta provisional con el progreso de subida hasta que el gateway responda.
-  const temp = renderJob({
-    id: `upload-${Date.now()}`,
-    status: "uploading",
-    progress: 0,
-    filename: state.file.name,
-    output_name: state.file.name,
-    options: { format: form.get("format") },
-    created_at: new Date().toISOString(),
-  });
-  $("#jobs").prepend(temp);
+  // Todas las tarjetas aparecen al instante; las subidas van de a MAX_PARALLEL_UPLOADS.
+  const pending = state.files.map((file) => ({
+    file,
+    card: renderJob({
+      id: `upload-${crypto.randomUUID()}`,
+      status: "uploading",
+      progress: 0,
+      filename: file.name,
+      output_name: file.name,
+      options: { format: options.get("format") },
+      created_at: new Date().toISOString(),
+    }),
+  }));
+  $("#jobs").prepend(...pending.map((p) => p.card));
   updateEmpty();
-  setFile(null);
+  setFiles([]);
   event.target.reset();
   updateBitrates();
 
-  const xhr = new XMLHttpRequest();
-  xhr.open("POST", "/api/jobs");
-  xhr.setRequestHeader("Authorization", `Bearer ${state.token}`);
-  xhr.upload.onprogress = (e) => {
-    if (e.lengthComputable) setProgress(temp, (e.loaded / e.total) * 100);
-  };
-  xhr.onload = () => {
-    let data = {};
-    try { data = JSON.parse(xhr.responseText); } catch { /* respuesta vacia */ }
-    if (xhr.status === 401) return logout();
-    if (xhr.status >= 400) {
-      temp.remove();
-      updateEmpty();
-      $("#upload-error").textContent = data.error || `Error ${xhr.status}`;
-      return;
+  const errors = [];
+  const worker = async () => {
+    for (let item = pending.shift(); item; item = pending.shift()) {
+      const err = await uploadOne(item.file, item.card, options);
+      if (err) errors.push(`${item.file.name}: ${err}`);
     }
-    temp.replaceWith(renderJob(data));
-    if (!FINAL.has(data.status)) watch(data.id);
   };
-  xhr.onerror = () => {
-    temp.remove();
-    updateEmpty();
-    $("#upload-error").textContent = "No se pudo subir el archivo. Revisa tu conexion.";
-  };
-  xhr.send(form);
+  await Promise.all(Array.from({ length: MAX_PARALLEL_UPLOADS }, worker));
+  $("#upload-error").textContent = errors.join(" · ");
 });
+
+function uploadOne(file, card, options) {
+  const form = new FormData();
+  for (const [key, value] of options) form.append(key, value);
+  form.append("file", file);
+
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/jobs");
+    xhr.setRequestHeader("Authorization", `Bearer ${state.token}`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) setProgress(card, (e.loaded / e.total) * 100);
+    };
+    xhr.onload = () => {
+      let data = {};
+      try { data = JSON.parse(xhr.responseText); } catch { /* respuesta vacia */ }
+      if (xhr.status === 401) {
+        logout();
+        return resolve("sesion expirada");
+      }
+      if (xhr.status >= 400) {
+        card.remove();
+        updateEmpty();
+        return resolve(data.error || `Error ${xhr.status}`);
+      }
+      card.replaceWith(renderJob(data));
+      if (!FINAL.has(data.status)) watch(data.id);
+      resolve(null);
+    };
+    xhr.onerror = () => {
+      card.remove();
+      updateEmpty();
+      resolve("no se pudo subir, revisa tu conexion");
+    };
+    xhr.send(form);
+  });
+}
 
 // ---------- lista de trabajos ----------
 
@@ -252,6 +281,8 @@ function statusInfo(job) {
   if (job.status === "uploading") return ["Subiendo", ""];
   if (job.status === "done") return [job.cached ? "Listo · instantaneo" : "Listo", "done"];
   if (job.status === "failed") return ["Error", "failed"];
+  if (job.status === "canceled") return ["Cancelado", "canceled"];
+  if (job.canceling) return ["Cancelando…", "retry"];
   if (job.status === "queued" && job.error) return ["Reintentando", "retry"];
   if (job.status === "processing") return [`Convirtiendo ${Math.round(job.progress)}%`, ""];
   return ["En cola", ""];
@@ -267,6 +298,8 @@ function renderJob(job) {
   el.id = `job-${job.id}`;
   updateJob(el, job);
   el.querySelector(".download").addEventListener("click", () => download(job.id, el));
+  el.querySelector(".cancel").addEventListener("click", () => cancelJob(job.id, el));
+  el.querySelector(".delete").addEventListener("click", () => deleteJob(job.id, el));
   return el;
 }
 
@@ -303,6 +336,39 @@ function updateJob(el, job) {
   const done = job.status === "done";
   el.querySelector(".download").hidden = !done;
   if (done) setupPlayer(el, job);
+  const uploading = job.status === "uploading";
+  el.querySelector(".cancel").hidden = uploading || FINAL.has(job.status) || !!job.canceling;
+  el.querySelector(".delete").hidden = !FINAL.has(job.status);
+}
+
+async function cancelJob(id, el) {
+  const button = el.querySelector(".cancel");
+  button.disabled = true;
+  try {
+    updateJob(el, await api(`/api/jobs/${id}/cancel`, { method: "POST" }));
+  } catch (err) {
+    el.querySelector(".job-error").textContent = err.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function deleteJob(id, el) {
+  if (!confirm(`¿Borrar "${el.dataset.name}"? No se puede deshacer.`)) return;
+  try {
+    const resp = await api(`/api/jobs/${id}`, { method: "DELETE", raw: true });
+    if (!resp.ok && resp.status !== 404) {
+      const data = await resp.json().catch(() => ({}));
+      throw new Error(data.error || `Error ${resp.status}`);
+    }
+    el.querySelector("audio")?.pause();
+    if (state.blobs.has(id)) URL.revokeObjectURL(state.blobs.get(id));
+    state.blobs.delete(id);
+    el.remove();
+    updateEmpty();
+  } catch (err) {
+    el.querySelector(".job-error").textContent = err.message;
+  }
 }
 
 // Progreso en vivo: el endpoint es SSE, pero se lee con fetch para poder
