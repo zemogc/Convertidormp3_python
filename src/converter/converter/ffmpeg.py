@@ -58,7 +58,31 @@ def probe(path: str) -> float:
     try:
         return float(info["format"]["duration"])
     except (KeyError, ValueError):
-        return 0.0
+        # Grabaciones en streaming (.webm del navegador, .mkv por pipe) no traen
+        # la duracion en la cabecera: se mide recorriendo el audio.
+        return scan_duration(path)
+
+
+def scan_duration(path: str) -> float:
+    """Mide la duracion copiando el audio a /dev/null, sin decodificarlo.
+
+    Solo lee paquetes, asi que tarda una fraccion de segundo incluso en
+    archivos largos; con eso la conversion puede mostrar un porcentaje real.
+    """
+    result = subprocess.run(
+        [
+            "ffmpeg", "-v", "error", "-nostdin", "-i", path, "-map", "0:a:0",
+            "-c", "copy", "-f", "null", "-progress", "pipe:1", "-",
+        ],
+        capture_output=True,
+        text=True,
+    )  # fmt: skip
+    seconds = 0.0
+    for line in result.stdout.splitlines():
+        key, _, value = line.partition("=")
+        if key == "out_time_us" and value.isdigit():
+            seconds = int(value) / 1_000_000
+    return seconds
 
 
 def clip_duration(total: float, options: dict) -> float:
