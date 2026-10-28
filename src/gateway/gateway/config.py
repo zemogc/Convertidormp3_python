@@ -9,6 +9,7 @@ class Config:
     rabbitmq_host: str = "localhost"
     video_queue: str = "video"
     max_upload_mb: int = 500
+    max_active_jobs: int = 5
     sse_poll_seconds: float = 0.5
     sse_max_seconds: int = 3600
 
@@ -21,4 +22,5 @@ class Config:
             rabbitmq_host=env("RABBITMQ_HOST", cls.rabbitmq_host),
             video_queue=env("VIDEO_QUEUE", cls.video_queue),
             max_upload_mb=int(env("MAX_UPLOAD_MB", cls.max_upload_mb)),
+            max_active_jobs=int(env("MAX_ACTIVE_JOBS", cls.max_active_jobs)),
         )

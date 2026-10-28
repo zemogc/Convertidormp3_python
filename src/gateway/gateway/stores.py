@@ -82,6 +82,11 @@ class MongoJobs:
         )
         return "canceling" if processing.matched_count else None
 
+    def count_active(self, owner: str) -> int:
+        return self.col.count_documents(
+            {"owner": owner, "status": {"$in": ["queued", "processing"]}}
+        )
+
     def delete(self, job_id: str) -> None:
         self.col.delete_one({"_id": job_id})
 
