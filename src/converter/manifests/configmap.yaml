@@ -3,5 +3,8 @@ kind: ConfigMap
 metadata:
   name: converter-configmap
 data:
-  MP3_QUEUE: "mp3"
+  RABBITMQ_HOST: "rabbitmq"
   VIDEO_QUEUE: "video"
+  MP3_QUEUE: "mp3"
+  MAX_ATTEMPTS: "3"
+  RETRY_DELAY_MS: "5000"
