@@ -16,7 +16,7 @@ from sqlalchemy import (
     select,
 )
 from sqlalchemy.engine import Engine
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 from sqlalchemy.pool import StaticPool
 
 log = logging.getLogger(__name__)
@@ -53,15 +53,20 @@ def make_engine(url: str) -> Engine:
 
 
 def init_schema(engine: Engine, attempts: int = 30, delay: float = 1.0) -> None:
-    """Crea las tablas, esperando a que la base de datos acepte conexiones."""
+    """Crea las tablas, esperando a que la base de datos acepte conexiones.
+
+    Varios workers arrancan a la vez y pueden intentar crear la tabla al mismo
+    tiempo; el que pierde la carrera recibe IntegrityError/ProgrammingError y
+    simplemente reintenta (create_all ya encuentra la tabla y no hace nada).
+    """
     for attempt in range(1, attempts + 1):
         try:
             metadata.create_all(engine)
             return
-        except OperationalError:
+        except (OperationalError, IntegrityError, ProgrammingError) as err:
             if attempt == attempts:
                 raise
-            log.warning("Base de datos no disponible (intento %d/%d)", attempt, attempts)
+            log.warning("No se pudo crear el esquema (intento %d/%d): %s", attempt, attempts, err)
             time.sleep(delay)
 
 
