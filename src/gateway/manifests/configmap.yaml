@@ -7,3 +7,4 @@ data:
   RABBITMQ_HOST: "rabbitmq"
   VIDEO_QUEUE: "video"
   MAX_UPLOAD_MB: "500"
+  MAX_ACTIVE_JOBS: "5"

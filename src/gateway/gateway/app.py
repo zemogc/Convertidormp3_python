@@ -10,6 +10,7 @@ from urllib.parse import quote
 
 from flask import Flask, Response, g, jsonify, request
 
+from . import metrics
 from .auth_client import AuthClient, AuthUnavailable
 from .config import Config
 from .options import DEFAULT_BITRATE, FORMATS, OptionsError, parse_options
@@ -56,6 +57,7 @@ def create_app(
     auth = auth or AuthClient(config.auth_svc_address)
 
     app = Flask(__name__, static_folder="static", static_url_path="/static")
+    metrics.init_labels(FORMATS)
     app.config["MAX_CONTENT_LENGTH"] = config.max_upload_mb * 1024 * 1024
 
     def error(message: str, status: int):
@@ -82,6 +84,24 @@ def create_app(
         job = jobs.get(job_id)
         # 404 tambien para trabajos ajenos: no revelamos que existen.
         return job if job and job["owner"] == g.user else None
+
+    @app.before_request
+    def start_timer():
+        g.started = time.perf_counter()
+
+    @app.after_request
+    def record_metrics(response):
+        endpoint = request.url_rule.rule if request.url_rule else "sin_ruta"
+        if endpoint != "/metrics":
+            metrics.REQUESTS.labels(request.method, endpoint, response.status_code).inc()
+            if "started" in g:
+                metrics.LATENCY.labels(endpoint).observe(time.perf_counter() - g.started)
+        return response
+
+    @app.get("/metrics")
+    def prometheus():
+        body, content_type = metrics.render()
+        return Response(body, content_type=content_type)
 
     @app.errorhandler(413)
     def too_large(_):
@@ -138,7 +158,7 @@ def create_app(
         except OptionsError as err:
             return error(str(err), 400)
 
-        content_hash = _sha256(upload.stream)
+        content_hash, size = _sha256(upload.stream)
         cache_key = hashlib.sha256(
             f"{content_hash}:{json.dumps(options, sort_keys=True)}".encode()
         ).hexdigest()
@@ -176,7 +196,19 @@ def create_app(
                 waveform=hit.get("waveform"),
             )
             jobs.create(job)
+            metrics.JOBS_CREATED.labels(options["format"], "true").inc()
             return jsonify(_public(job)), 200
+
+        # Los resultados de cache son gratis; el limite solo frena conversiones reales.
+        if jobs.count_active(g.user) >= config.max_active_jobs:
+            metrics.JOBS_REJECTED.labels("active_limit").inc()
+            resp = error(
+                f"ya tienes {config.max_active_jobs} conversiones en curso; "
+                "espera a que termine alguna",
+                429,
+            )
+            resp[0].headers["Retry-After"] = "10"
+            return resp
 
         job["video_fid"] = storage.put_video(upload.stream, upload.filename, upload.mimetype)
         jobs.create(job)
@@ -188,7 +220,10 @@ def create_app(
         except QueueUnavailable:
             storage.delete_video(job["video_fid"])
             jobs.update(job["_id"], status="failed", error="cola no disponible", video_fid=None)
+            metrics.JOBS_REJECTED.labels("queue_unavailable").inc()
             return error("cola de conversion no disponible, intenta de nuevo", 503)
+        metrics.JOBS_CREATED.labels(options["format"], "false").inc()
+        metrics.UPLOAD_BYTES.inc(size)
         return jsonify(_public(job)), 202
 
     @app.get("/api/jobs")
@@ -303,12 +338,13 @@ def create_app(
     return app
 
 
-def _sha256(stream) -> str:
-    digest = hashlib.sha256()
+def _sha256(stream) -> tuple[str, int]:
+    digest, size = hashlib.sha256(), 0
     while data := stream.read(CHUNK):
         digest.update(data)
+        size += len(data)
     stream.seek(0)
-    return digest.hexdigest()
+    return digest.hexdigest(), size
 
 
 def _output_name(filename: str, fmt: str) -> str:
