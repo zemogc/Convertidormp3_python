@@ -98,7 +98,7 @@ def wait_healthy(timeout=120):
     check(False, "el gateway no respondio a tiempo")
 
 
-def follow_events(job_id, token, timeout=180):
+def follow_events(job_id, token, timeout=180, on_event=None):
     """Lee el stream SSE y devuelve la lista de estados recibidos."""
     req = urllib.request.Request(
         f"{BASE}/api/jobs/{job_id}/events", headers={"Authorization": f"Bearer {token}"}
@@ -111,7 +111,9 @@ def follow_events(job_id, token, timeout=180):
                 job = json.loads(line[6:])
                 events.append(job)
                 print(f"      {job['status']:<10} {job['progress']:5.1f}%")
-                if job["status"] in ("done", "failed"):
+                if on_event:
+                    on_event(job)
+                if job["status"] in ("done", "failed", "canceled"):
                     break
     return events
 
@@ -200,6 +202,28 @@ def main():
     step("Privacidad")
     status, _, _ = request("GET", f"/api/jobs/{job['id']}/download", token=intruder)
     check(status == 404, "otro usuario no puede descargar el trabajo")
+
+    step("Cancelar una conversion en curso")
+    status, running = upload(token, video, "cancelar.mkv", format="flac", normalize="1")
+    check(status == 202, "encolado")
+    sent = []
+
+    def cancel_when_running(event):
+        if not sent and event["status"] == "processing" and event["progress"] > 0:
+            sent.append(request("POST", f"/api/jobs/{running['id']}/cancel", token=token)[0])
+
+    final = follow_events(running["id"], token, on_event=cancel_when_running)[-1]
+    check(sent == [202], "cancelacion aceptada mientras convertia (202)")
+    check(final["status"] == "canceled", f"estado final 'canceled' ({final['status']})")
+
+    step("Borrar trabajos")
+    status, _, _ = request("DELETE", f"/api/jobs/{running['id']}", token=token)
+    check(status == 204, "trabajo cancelado borrado")
+    check(request("GET", f"/api/jobs/{running['id']}", token=token)[0] == 404, "ya no existe")
+    status, _, _ = request("DELETE", f"/api/jobs/{job['id']}", token=token)
+    check(status == 204, "trabajo original borrado")
+    status, audio, _ = request("GET", f"/api/jobs/{cached['id']}/download", token=token)
+    check(status == 200 and audio[:3] == b"ID3", "la copia de cache sigue descargable")
 
     step("Video sin audio -> error permanente sin reintentos")
     status, bad = upload(token, mute, "mudo.mkv")
