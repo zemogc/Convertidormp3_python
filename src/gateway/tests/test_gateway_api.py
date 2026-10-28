@@ -11,7 +11,12 @@ def finish(deps, job_id, data=b"ID3-audio"):
     """Simula que el converter termino el trabajo."""
     deps["storage"].outputs["out-" + job_id] = data
     deps["jobs"].update(
-        job_id, status="done", progress=100.0, output_fid="out-" + job_id, output_size=len(data)
+        job_id,
+        status="done",
+        progress=100.0,
+        output_fid="out-" + job_id,
+        output_size=len(data),
+        waveform=[0.2, 1.0, 0.4],
     )
 
 
@@ -95,6 +100,7 @@ def test_identical_upload_is_served_from_cache(client, deps, ana, beto, upload):
     assert again.status_code == 200
     assert again.json["status"] == "done"
     assert again.json["cached"] is True
+    assert again.json["waveform"] == [0.2, 1.0, 0.4]
     assert len(deps["publisher"].messages) == 1  # no se volvio a encolar
 
     # Opciones distintas => clave distinta => se convierte de nuevo.

@@ -166,6 +166,8 @@ def main():
     final = events[-1]
     check(final["status"] == "done", f"estado final 'done' (error: {final['error']})")
     check(abs(final["duration"] - 585) < 0.5, f"duracion recortada a 585 s ({final['duration']})")
+    wave = final["waveform"] or []
+    check(len(wave) == 160 and max(wave) == 1.0, f"forma de onda de {len(wave)} barras")
     intermediate = [e for e in events if e["status"] == "processing" and 0 < e["progress"] < 100]
     check(
         len(intermediate) >= 1, f"se recibieron {len(intermediate)} eventos de progreso intermedio"
