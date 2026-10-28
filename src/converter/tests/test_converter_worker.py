@@ -26,6 +26,9 @@ class FakeStorage:
     def delete_video(self, fid):
         del self.videos[fid]
 
+    def delete_output(self, fid):
+        del self.outputs[fid]
+
 
 class FakeJobs:
     def __init__(self, **job):
@@ -40,18 +43,43 @@ class FakeJobs:
             **job,
         }
         self.progress = []
+        self.cancel_after = None  # cancelar cuando se hayan reportado N progresos
+        self.cancel_checks = 0
+        self.cancel_on_finish = False
 
     def get(self, job_id):
         return dict(self.doc) if job_id == self.doc["_id"] else None
 
     def start(self, job_id):
+        if self.doc["status"] not in ("queued", "processing"):
+            return None
         self.doc.update(status="processing", progress=0.0, attempts=self.doc["attempts"] + 1)
         return dict(self.doc)
 
     def update(self, job_id, **fields):
-        if set(fields) == {"progress"}:
-            self.progress.append(fields["progress"])
         self.doc.update(fields)
+
+    def finish(self, job_id, **fields):
+        if self.cancel_on_finish:
+            self.doc["cancel_requested"] = True
+        if self.doc.get("cancel_requested"):
+            return False
+        self.doc.update(fields)
+        return True
+
+    def _maybe_cancel(self):
+        if self.cancel_after is not None and len(self.progress) >= self.cancel_after:
+            self.doc["cancel_requested"] = True
+        return bool(self.doc.get("cancel_requested"))
+
+    def report_progress(self, job_id, progress):
+        self.progress.append(progress)
+        self.doc["progress"] = progress
+        return self._maybe_cancel()
+
+    def cancel_requested(self, job_id):
+        self.cancel_checks += 1
+        return self._maybe_cancel()
 
 
 class FakeFfmpeg:
@@ -59,6 +87,7 @@ class FakeFfmpeg:
         self.fail = fail
         self.duration = duration
         self.input_duration = duration if input_duration is None else input_duration
+        self.steps = (10.0, 10.5, 50.0, 100.0)
 
     def probe(self, path):
         if isinstance(self.fail, PermanentError):
@@ -75,7 +104,7 @@ class FakeFfmpeg:
     def convert(self, src, dst, options, total, on_progress):
         if isinstance(self.fail, Exception):
             raise self.fail
-        for pct in (10.0, 10.5, 50.0, 100.0):
+        for pct in self.steps:
             on_progress(pct)
         with open(dst, "wb") as fh:
             fh.write(b"mp3-data")
@@ -187,3 +216,43 @@ def test_duration_is_measured_on_output_when_input_has_none():
     jobs = FakeJobs()
     run(jobs, FakeFfmpeg(duration=95.0, input_duration=0.0))
     assert jobs.doc["duration"] == 95.0
+
+
+def test_job_canceled_while_queued_is_skipped():
+    jobs = FakeJobs(status="canceled")
+    storage, published = run(jobs, FakeFfmpeg(fail=AssertionError("no deberia convertir")))
+    assert published == []
+    assert jobs.doc["attempts"] == 0
+
+
+def test_cancel_during_conversion():
+    jobs = FakeJobs()
+    jobs.cancel_after = 1  # el usuario cancela tras el primer progreso
+    storage, published = run(jobs, FakeFfmpeg())
+
+    assert jobs.doc["status"] == "canceled"
+    assert jobs.doc["cancel_requested"] is False
+    assert jobs.progress == [10.0]  # se detuvo en el primer reporte
+    assert storage.videos == {} and storage.outputs == {}
+    assert published == []  # ni reintento, ni DLQ, ni email
+
+
+def test_cancel_is_detected_without_known_duration():
+    # Sin duracion el progreso llega como None: igual se revisa el flag.
+    jobs = FakeJobs()
+    jobs.doc["cancel_requested"] = True
+    ff = FakeFfmpeg()
+    ff.steps = (None, None, None)
+    run(jobs, ff)
+    assert jobs.cancel_checks == 1
+    assert jobs.doc["status"] == "canceled"
+
+
+def test_cancel_right_before_finishing_discards_the_output():
+    # La cancelacion llega despues de ffmpeg (p. ej. subiendo el audio a GridFS).
+    jobs = FakeJobs()
+    jobs.cancel_on_finish = True
+    storage, published = run(jobs, FakeFfmpeg())
+    assert jobs.doc["status"] == "canceled"
+    assert storage.outputs == {}  # el audio subido se borra
+    assert published == []

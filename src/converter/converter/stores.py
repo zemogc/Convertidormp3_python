@@ -29,6 +29,9 @@ class GridStorage:
     def delete_video(self, fid: str) -> None:
         self.videos.delete(ObjectId(fid))
 
+    def delete_output(self, fid: str) -> None:
+        self.outputs.delete(ObjectId(fid))
+
 
 class MongoJobs:
     def __init__(self, client: MongoClient):
@@ -38,9 +41,13 @@ class MongoJobs:
         return self.col.find_one({"_id": job_id})
 
     def start(self, job_id: str) -> dict:
-        """Marca el trabajo en proceso e incrementa el contador de intentos."""
+        """Marca el trabajo en proceso e incrementa el contador de intentos.
+
+        Devuelve None si mientras tanto se cancelo o termino: el filtro por estado
+        hace la transicion atomica frente a una cancelacion desde el gateway.
+        """
         return self.col.find_one_and_update(
-            {"_id": job_id},
+            {"_id": job_id, "status": {"$in": ["queued", "processing"]}},
             {
                 "$set": {"status": "processing", "progress": 0.0, "updated_at": utcnow()},
                 "$inc": {"attempts": 1},
@@ -50,3 +57,24 @@ class MongoJobs:
 
     def update(self, job_id: str, **fields) -> None:
         self.col.update_one({"_id": job_id}, {"$set": {**fields, "updated_at": utcnow()}})
+
+    def finish(self, job_id: str, **fields) -> bool:
+        """Marca el trabajo como terminado salvo que se haya pedido cancelarlo."""
+        result = self.col.update_one(
+            {"_id": job_id, "cancel_requested": {"$ne": True}},
+            {"$set": {**fields, "updated_at": utcnow()}},
+        )
+        return result.matched_count == 1
+
+    def report_progress(self, job_id: str, progress: float) -> bool:
+        """Guarda el progreso y devuelve True si el usuario pidio cancelar."""
+        doc = self.col.find_one_and_update(
+            {"_id": job_id},
+            {"$set": {"progress": progress, "updated_at": utcnow()}},
+            projection={"cancel_requested": 1},
+        )
+        return bool(doc and doc.get("cancel_requested"))
+
+    def cancel_requested(self, job_id: str) -> bool:
+        doc = self.col.find_one({"_id": job_id}, {"cancel_requested": 1})
+        return bool(doc and doc.get("cancel_requested"))
