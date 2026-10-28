@@ -50,6 +50,9 @@ class FakeStorage:
     def delete_video(self, fid):
         self.videos.pop(fid, None)
 
+    def delete_output(self, fid):
+        del self.outputs[fid]
+
     def open_output(self, fid):
         data = self.outputs.get(fid)
         return FakeFile(data) if data is not None else None
@@ -78,6 +81,24 @@ class FakeJobs:
 
     def update(self, job_id, **fields):
         self.docs[job_id].update(fields, updated_at=utcnow())
+
+    def cancel(self, job_id):
+        job = self.docs[job_id]
+        if job["status"] == "queued":
+            job.update(status="canceled", progress=0.0, error=None)
+            return "canceled"
+        if job["status"] == "processing":
+            job["cancel_requested"] = True
+            return "canceling"
+        return None
+
+    def delete(self, job_id):
+        del self.docs[job_id]
+
+    def output_in_use(self, output_fid, excluding):
+        return any(
+            j["output_fid"] == output_fid and j["_id"] != excluding for j in self.docs.values()
+        )
 
 
 class FakePublisher:

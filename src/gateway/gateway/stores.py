@@ -26,6 +26,9 @@ class GridStorage:
     def delete_video(self, fid: str) -> None:
         self.videos.delete(ObjectId(fid))
 
+    def delete_output(self, fid: str) -> None:
+        self.outputs.delete(ObjectId(fid))
+
     def open_output(self, fid: str):
         """Devuelve un archivo con .read(n), .length y .filename, o None."""
         try:
@@ -58,3 +61,33 @@ class MongoJobs:
 
     def update(self, job_id: str, **fields) -> None:
         self.col.update_one({"_id": job_id}, {"$set": {**fields, "updated_at": utcnow()}})
+
+    def cancel(self, job_id: str) -> str | None:
+        """Cancela un trabajo activo. Devuelve 'canceled', 'canceling' o None.
+
+        En cola: pasa a 'canceled' de inmediato (el filtro por estado gana o pierde
+        la carrera contra el converter de forma atomica). En proceso: se marca
+        cancel_requested y el converter detiene ffmpeg en su siguiente reporte.
+        """
+        now = utcnow()
+        queued = self.col.update_one(
+            {"_id": job_id, "status": "queued"},
+            {"$set": {"status": "canceled", "progress": 0.0, "error": None, "updated_at": now}},
+        )
+        if queued.modified_count:
+            return "canceled"
+        processing = self.col.update_one(
+            {"_id": job_id, "status": "processing"},
+            {"$set": {"cancel_requested": True, "updated_at": now}},
+        )
+        return "canceling" if processing.matched_count else None
+
+    def delete(self, job_id: str) -> None:
+        self.col.delete_one({"_id": job_id})
+
+    def output_in_use(self, output_fid: str, excluding: str) -> bool:
+        """True si otro trabajo (p. ej. un resultado de cache) usa el mismo archivo."""
+        return (
+            self.col.count_documents({"output_fid": output_fid, "_id": {"$ne": excluding}}, limit=1)
+            > 0
+        )
