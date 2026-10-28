@@ -91,6 +91,8 @@ class Worker:
             self.ffmpeg.convert(src, dst, options, total, self._progress_reporter(job_id))
 
             size = os.path.getsize(dst)
+            duration = self._output_duration(dst, total)
+            peaks = self._waveform(dst, duration, job_id)
             output_fid = self.storage.put_output(
                 dst, job["output_name"], {"job_id": job_id, "owner": job["owner"]}
             )
@@ -101,7 +103,8 @@ class Worker:
             progress=100.0,
             output_fid=output_fid,
             output_size=size,
-            duration=round(total, 2),
+            duration=round(duration, 2),
+            waveform=peaks,
             error=None,
         )
         # El video original ya no hace falta: libera espacio en GridFS.
@@ -111,6 +114,22 @@ class Worker:
         except Exception:
             log.exception("No se pudo borrar el video de %s", job_id)
         log.info("Trabajo %s listo (%d bytes)", job_id, size)
+
+    def _output_duration(self, path: str, fallback: float) -> float:
+        # Videos grabados en streaming (p. ej. .webm del navegador) no traen la
+        # duracion en la cabecera; el archivo de salida si, asi que se mide ahi.
+        try:
+            return self.ffmpeg.probe(path) or fallback
+        except Exception:
+            return fallback
+
+    def _waveform(self, path: str, total: float, job_id: str) -> list[float] | None:
+        # Es un extra visual: si falla, el trabajo igual termina bien.
+        try:
+            return self.ffmpeg.waveform(path, total)
+        except Exception:
+            log.exception("No se pudo calcular la forma de onda de %s", job_id)
+            return None
 
     def _progress_reporter(self, job_id: str) -> Callable[[float], None]:
         """Escribe el progreso en Mongo como mucho cada 0.5 s para no saturarlo."""
