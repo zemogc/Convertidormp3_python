@@ -40,10 +40,10 @@
     <section id="app-view" hidden>
       <form class="card" id="upload-form">
         <label class="dropzone" id="dropzone">
-          <input type="file" name="file" id="file" accept="video/*,audio/*" hidden>
+          <input type="file" name="file" id="file" accept="video/*,audio/*" multiple hidden>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 15v4H5v-4H3v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4zM11 5.83V16h2V5.83l3.59 3.58L18 8l-6-6-6 6 1.41 1.41z"/></svg>
-          <strong id="drop-title">Arrastra un video aqui</strong>
-          <span class="muted" id="drop-hint">o haz clic para elegirlo</span>
+          <strong id="drop-title">Arrastra uno o varios videos aqui</strong>
+          <span class="muted" id="drop-hint">o haz clic para elegirlos</span>
         </label>
 
         <div class="options">
@@ -104,7 +104,11 @@
         </div>
       </div>
       <div class="job-actions">
+        <button class="ghost cancel" type="button" hidden>Cancelar</button>
         <button class="primary download" type="button" hidden>Descargar</button>
+        <button class="icon delete" type="button" aria-label="Borrar" title="Borrar" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3v1H4v2h1v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V6h1V4h-5V3zm-2 3h10v13H7zm2 2v9h2V8zm4 0v9h2V8z"/></svg>
+        </button>
       </div>
     </li>
   </template>
