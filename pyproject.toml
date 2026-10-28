@@ -1,0 +1,12 @@
+[tool.pytest.ini_options]
+pythonpath = ["src/auth", "src/gateway", "src/converter", "src/notification"]
+testpaths = ["src"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["src/venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

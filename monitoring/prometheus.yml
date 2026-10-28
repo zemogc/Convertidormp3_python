@@ -1,0 +1,22 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: gateway
+    static_configs:
+      - targets: ["gateway:8080"]
+
+  # El converter corre con varias replicas: el DNS de compose devuelve una IP
+  # por replica y Prometheus las descubre todas.
+  - job_name: converter
+    dns_sd_configs:
+      - names: ["converter"]
+        type: A
+        port: 9100
+        refresh_interval: 15s
+
+  - job_name: rabbitmq
+    metrics_path: /metrics/per-object
+    static_configs:
+      - targets: ["rabbitmq:15692"]

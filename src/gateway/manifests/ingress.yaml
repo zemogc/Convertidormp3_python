@@ -6,7 +6,8 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-body-size: "0"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
-    #nginx.ingress.kubernetes.io/proxy-max-temp-file-size: "1024m"
+    # SSE de progreso: sin buffering para que los eventos lleguen al instante
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
 spec:
   rules:
     - host: mp3converter.com
