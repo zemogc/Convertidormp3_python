@@ -30,6 +30,10 @@ class FfmpegError(Exception):
     pass
 
 
+class Canceled(Exception):
+    """El usuario cancelo el trabajo mientras se convertia."""
+
+
 def probe(path: str) -> float:
     """Devuelve la duracion en segundos. Falla si el archivo no tiene audio."""
     result = subprocess.run(
@@ -89,30 +93,40 @@ def build_command(src: str, dst: str, options: dict) -> list[str]:
     return cmd
 
 
-def parse_progress(lines: Iterable[str], total: float, on_progress: Callable[[float], None]):
-    """Lee la salida de `-progress` y reporta un porcentaje 0-100."""
+def parse_progress(lines: Iterable[str], total: float, on_progress: Callable[[float | None], None]):
+    """Lee la salida de `-progress` y reporta un porcentaje 0-100.
+
+    Si no se conoce la duracion reporta None: no hay porcentaje, pero el
+    callback igual se ejecuta (lo usa el worker para detectar cancelaciones).
+    """
     for line in lines:
         key, _, value = line.strip().partition("=")
         # out_time_ms tambien viene en microsegundos (bug historico de ffmpeg).
-        if key in ("out_time_us", "out_time_ms") and total > 0:
+        if key in ("out_time_us", "out_time_ms"):
             try:
                 seconds = int(value) / 1_000_000
             except ValueError:
                 continue
-            on_progress(min(max(seconds / total * 100, 0.0), 99.9))
+            on_progress(min(max(seconds / total * 100, 0.0), 99.9) if total > 0 else None)
         elif key == "progress" and value == "end":
             on_progress(100.0)
 
 
 def convert(
-    src: str, dst: str, options: dict, total: float, on_progress: Callable[[float], None]
+    src: str, dst: str, options: dict, total: float, on_progress: Callable[[float | None], None]
 ) -> None:
     cmd = build_command(src, dst, options)
     # stderr a un archivo: si fuera un pipe sin leer podria llenarse y bloquear ffmpeg.
     with tempfile.TemporaryFile(mode="w+") as err:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=err, text=True)
         assert proc.stdout is not None
-        parse_progress(proc.stdout, total, on_progress)
+        try:
+            parse_progress(proc.stdout, total, on_progress)
+        except BaseException:
+            # Cancelacion (o cualquier error en el callback): no dejar ffmpeg huerfano.
+            proc.kill()
+            proc.wait()
+            raise
         code = proc.wait()
         if code != 0:
             err.seek(0)

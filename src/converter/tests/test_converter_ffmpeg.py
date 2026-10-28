@@ -1,5 +1,6 @@
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -71,10 +72,10 @@ def test_parse_progress():
     assert seen == [25.0, 50.0, 99.9, 100.0]
 
 
-def test_parse_progress_unknown_duration_only_reports_end():
+def test_parse_progress_unknown_duration_reports_none():
     seen = []
     ffmpeg.parse_progress(["out_time_us=1000", "progress=end"], 0.0, seen.append)
-    assert seen == [100.0]
+    assert seen == [None, 100.0]
 
 
 @pytest.mark.parametrize(
@@ -164,3 +165,29 @@ def test_real_waveform_follows_volume(tmp_path):
     assert len(peaks) == ffmpeg.WAVEFORM_POINTS
     assert max(peaks) == 1.0
     assert peaks[10] < peaks[80] < peaks[-10]  # fade in: el volumen sube
+
+
+@needs_ffmpeg
+def test_cancel_kills_ffmpeg(tmp_path):
+    video = tmp_path / "long.mkv"
+    subprocess.run(
+        [
+            "ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "sine=duration=600",
+            str(video),
+        ],
+        check=True,
+    )  # fmt: skip
+
+    def cancel(_):
+        raise ffmpeg.Canceled()
+
+    with pytest.raises(ffmpeg.Canceled):
+        ffmpeg.convert(str(video), str(tmp_path / "o.mp3"), opts(), 600.0, cancel)
+    # ffmpeg murio: no queda ningun proceso llamado ffmpeg
+    alive = []
+    for comm in Path("/proc").glob("[0-9]*/comm"):
+        try:
+            alive += [comm] if comm.read_text().strip() == "ffmpeg" else []
+        except OSError:
+            pass
+    assert alive == []
