@@ -3,6 +3,7 @@
 import json
 import subprocess
 import tempfile
+from array import array
 from collections.abc import Callable, Iterable
 
 # formato -> argumentos del codec (sin bitrate)
@@ -16,6 +17,9 @@ CODECS = {
 }
 # Normalizacion de sonoridad EBU R128 (el estandar de streaming: -16 LUFS)
 LOUDNORM = "loudnorm=I=-16:TP=-1.5:LRA=11"
+# Forma de onda: cantidad de barras y frecuencia de muestreo usada para calcularla.
+WAVEFORM_POINTS = 160
+WAVEFORM_RATE = 8000
 
 
 class PermanentError(Exception):
@@ -114,3 +118,41 @@ def convert(
             err.seek(0)
             detail = err.read().strip().splitlines()
             raise FfmpegError(detail[-1] if detail else f"ffmpeg salio con codigo {code}")
+
+
+def waveform(path: str, duration: float, points: int = WAVEFORM_POINTS) -> list[float]:
+    """Envolvente de picos normalizada (0-1) para dibujar la forma de onda.
+
+    Decodifica a PCM mono de 16 bits en streaming y toma el pico de cada tramo,
+    asi la memoria usada no depende de la duracion del audio.
+    """
+    bucket = max(int(duration * WAVEFORM_RATE) // points, 1)
+    cmd = [
+        "ffmpeg", "-v", "error", "-nostdin", "-i", path,
+        "-ac", "1", "-ar", str(WAVEFORM_RATE), "-f", "s16le", "-",
+    ]  # fmt: skip
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    assert proc.stdout is not None
+    peaks: list[int] = []
+    try:
+        while data := proc.stdout.read(bucket * 2):
+            samples = array("h")
+            samples.frombytes(data[: len(data) // 2 * 2])
+            if samples:
+                peaks.append(max(max(samples), -min(samples)))
+    finally:
+        proc.stdout.close()
+        proc.wait()
+    return normalize_peaks(peaks, points)
+
+
+def normalize_peaks(peaks: list[int], points: int) -> list[float]:
+    """Reduce a `points` barras (maximo por grupo) y escala a 0-1."""
+    if len(peaks) > points:
+        size = len(peaks) / points
+        peaks = [
+            max(peaks[int(i * size) : max(int((i + 1) * size), int(i * size) + 1)])
+            for i in range(points)
+        ]
+    top = max(peaks, default=0) or 1
+    return [round(p / top, 3) for p in peaks]

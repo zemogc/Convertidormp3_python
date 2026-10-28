@@ -55,17 +55,25 @@ class FakeJobs:
 
 
 class FakeFfmpeg:
-    def __init__(self, fail=None, duration=10.0):
+    def __init__(self, fail=None, duration=10.0, input_duration=None):
         self.fail = fail
         self.duration = duration
+        self.input_duration = duration if input_duration is None else input_duration
 
     def probe(self, path):
         if isinstance(self.fail, PermanentError):
             raise self.fail
+        if path.endswith("input"):
+            return self.input_duration
         return self.duration
 
+    def waveform(self, path, duration):
+        if self.fail == "waveform":
+            raise RuntimeError("sin forma de onda")
+        return [0.5, 1.0]
+
     def convert(self, src, dst, options, total, on_progress):
-        if self.fail:
+        if isinstance(self.fail, Exception):
             raise self.fail
         for pct in (10.0, 10.5, 50.0, 100.0):
             on_progress(pct)
@@ -102,6 +110,7 @@ def test_successful_conversion():
     assert jobs.doc["output_fid"] == "out1"
     assert jobs.doc["output_size"] == len(b"mp3-data")
     assert jobs.doc["duration"] == 10.0
+    assert jobs.doc["waveform"] == [0.5, 1.0]
     assert jobs.doc["video_fid"] is None
     assert storage.videos == {}  # el video original se borra
     assert storage.outputs["out1"][1] == "clip.mp3"
@@ -163,3 +172,18 @@ def test_unknown_job_is_dropped():
 def test_malformed_message_goes_to_dlq(body):
     _, published = run(FakeJobs(), FakeFfmpeg(), body=body)
     assert [q for q, _ in published] == ["video.dlq"]
+
+
+def test_waveform_failure_does_not_fail_the_job():
+    jobs = FakeJobs()
+    _, published = run(jobs, FakeFfmpeg(fail="waveform"))
+    assert jobs.doc["status"] == "done"
+    assert jobs.doc["waveform"] is None
+    assert [q for q, _ in published] == ["mp3"]
+
+
+def test_duration_is_measured_on_output_when_input_has_none():
+    # .webm grabado en streaming: ffprobe no da duracion para la entrada.
+    jobs = FakeJobs()
+    run(jobs, FakeFfmpeg(duration=95.0, input_duration=0.0))
+    assert jobs.doc["duration"] == 95.0

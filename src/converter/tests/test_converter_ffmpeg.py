@@ -96,6 +96,16 @@ def test_clip_start_after_end_of_video():
         ffmpeg.clip_duration(10.0, {"start": 20})
 
 
+def test_normalize_peaks_downsamples_with_max():
+    assert ffmpeg.normalize_peaks([1, 4, 2, 8, 3, 2], 3) == [0.5, 1.0, 0.375]
+
+
+def test_normalize_peaks_short_and_silent():
+    assert ffmpeg.normalize_peaks([10, 20], 160) == [0.5, 1.0]
+    assert ffmpeg.normalize_peaks([0, 0, 0], 2) == [0.0, 0.0]
+    assert ffmpeg.normalize_peaks([], 160) == []
+
+
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg no esta instalado")
 
 
@@ -138,3 +148,19 @@ def test_video_without_audio_is_permanent_error(tmp_path):
     )
     with pytest.raises(ffmpeg.PermanentError):
         ffmpeg.probe(str(video))
+
+
+@needs_ffmpeg
+def test_real_waveform_follows_volume(tmp_path):
+    audio = tmp_path / "fade.wav"
+    subprocess.run(
+        [
+            "ffmpeg", "-loglevel", "error", "-f", "lavfi",
+            "-i", "sine=frequency=440:duration=4", "-af", "afade=t=in:d=4", str(audio),
+        ],
+        check=True,
+    )  # fmt: skip
+    peaks = ffmpeg.waveform(str(audio), 4.0)
+    assert len(peaks) == ffmpeg.WAVEFORM_POINTS
+    assert max(peaks) == 1.0
+    assert peaks[10] < peaks[80] < peaks[-10]  # fade in: el volumen sube
