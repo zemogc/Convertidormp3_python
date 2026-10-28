@@ -19,6 +19,20 @@ def test_healthz(client):
     assert client.get("/healthz").json == {"status": "ok"}
 
 
+def test_formats_are_public(client):
+    data = client.get("/api/formats").json
+    assert data["default_bitrate"] == 192
+    by_id = {f["id"]: f["bitrates"] for f in data["formats"]}
+    assert 320 in by_id["mp3"]
+    assert by_id["flac"] == []
+
+
+def test_index_serves_ui(client):
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert b"<html" in resp.data
+
+
 def test_register_and_login_are_proxied(client):
     resp = client.post("/api/register", json={"email": "ana@example.com", "password": "12345678"})
     assert resp.status_code == 201

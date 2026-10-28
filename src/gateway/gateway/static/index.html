@@ -1,5 +1,103 @@
 <!doctype html>
 <html lang="es">
-<head><meta charset="utf-8"><title>Convertidor</title></head>
-<body><p>API activa. Consulta <code>/api/jobs</code>.</p></body>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Convertidor de audio</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%237c5cff' d='M12 3v10.55A4 4 0 1 0 14 17V7h4V3z'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3z"/></svg>
+      <span>Convertidor</span>
+    </div>
+    <div class="session" id="session" hidden>
+      <span id="who"></span>
+      <button class="ghost" id="logout" type="button">Salir</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Acceso -->
+    <section class="card auth" id="auth-view" hidden>
+      <h1>Convierte videos en audio</h1>
+      <p class="muted">MP3, M4A, OGG, Opus, FLAC o WAV. Recorta, normaliza el volumen y sigue el progreso en vivo.</p>
+      <div class="tabs" role="tablist">
+        <button role="tab" class="tab active" data-mode="login" type="button">Entrar</button>
+        <button role="tab" class="tab" data-mode="register" type="button">Crear cuenta</button>
+      </div>
+      <form id="auth-form" novalidate>
+        <label>Email <input type="email" name="email" autocomplete="email" required></label>
+        <label>Contrasena <input type="password" name="password" autocomplete="current-password" minlength="8" required></label>
+        <button class="primary" type="submit" id="auth-submit">Entrar</button>
+        <p class="error" id="auth-error" role="alert"></p>
+      </form>
+    </section>
+
+    <!-- App -->
+    <section id="app-view" hidden>
+      <form class="card" id="upload-form">
+        <label class="dropzone" id="dropzone">
+          <input type="file" name="file" id="file" accept="video/*,audio/*" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 15v4H5v-4H3v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4zM11 5.83V16h2V5.83l3.59 3.58L18 8l-6-6-6 6 1.41 1.41z"/></svg>
+          <strong id="drop-title">Arrastra un video aqui</strong>
+          <span class="muted" id="drop-hint">o haz clic para elegirlo</span>
+        </label>
+
+        <div class="options">
+          <label>Formato
+            <select name="format" id="format"></select>
+          </label>
+          <label>Calidad
+            <select name="bitrate" id="bitrate"></select>
+          </label>
+          <label>Inicio <input name="start" placeholder="0:00" inputmode="decimal"></label>
+          <label>Fin <input name="end" placeholder="hasta el final" inputmode="decimal"></label>
+          <label>Titulo <input name="title" maxlength="200" placeholder="opcional"></label>
+          <label>Artista <input name="artist" maxlength="200" placeholder="opcional"></label>
+          <label class="switch">
+            <input type="checkbox" name="normalize" value="1">
+            <span class="track" aria-hidden="true"></span>
+            <span>Normalizar volumen <small class="muted">(EBU R128, -16 LUFS)</small></span>
+          </label>
+        </div>
+
+        <button class="primary" type="submit" id="convert" disabled>Convertir</button>
+        <p class="error" id="upload-error" role="alert"></p>
+      </form>
+
+      <section>
+        <div class="list-header">
+          <h2>Tus conversiones</h2>
+          <span class="muted" id="count"></span>
+        </div>
+        <ul class="jobs" id="jobs"></ul>
+        <p class="muted empty" id="empty">Aun no convertiste nada. Sube tu primer video.</p>
+      </section>
+    </section>
+  </main>
+
+  <template id="job-template">
+    <li class="job">
+      <div class="job-main">
+        <div class="job-title">
+          <strong class="name"></strong>
+          <span class="badge"></span>
+        </div>
+        <div class="meta muted"></div>
+        <div class="bar"><div class="fill"></div></div>
+        <p class="error job-error"></p>
+        <audio controls preload="none" hidden></audio>
+      </div>
+      <div class="job-actions">
+        <button class="ghost play" type="button" hidden>Escuchar</button>
+        <button class="primary download" type="button" hidden>Descargar</button>
+      </div>
+    </li>
+  </template>
+
+  <script src="/static/app.js" defer></script>
+</body>
 </html>
