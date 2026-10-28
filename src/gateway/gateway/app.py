@@ -12,7 +12,7 @@ from flask import Flask, Response, g, jsonify, request
 
 from .auth_client import AuthClient, AuthUnavailable
 from .config import Config
-from .options import OptionsError, parse_options
+from .options import DEFAULT_BITRATE, FORMATS, OptionsError, parse_options
 from .publisher import QueueUnavailable
 from .stores import CHUNK, utcnow
 
@@ -93,6 +93,13 @@ def create_app(
     @app.get("/")
     def index():
         return app.send_static_file("index.html")
+
+    @app.get("/api/formats")
+    def formats():
+        return jsonify(
+            default_bitrate=DEFAULT_BITRATE,
+            formats=[{"id": f, "bitrates": list(b) if b else []} for f, b in FORMATS.items()],
+        )
 
     @app.post("/api/register")
     def register():
