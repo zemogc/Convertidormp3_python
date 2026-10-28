@@ -1,5 +1,5 @@
 [tool.pytest.ini_options]
-pythonpath = ["src/auth", "src/gateway"]
+pythonpath = ["src/auth", "src/gateway", "src/converter", "src/notification"]
 testpaths = ["src"]
 addopts = "-q"
 

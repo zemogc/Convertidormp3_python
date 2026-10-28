@@ -5,6 +5,7 @@ metadata:
   labels:
     app: converter
 spec:
+  # Cada replica procesa un video a la vez (prefetch=1): escalar replicas = mas videos en paralelo.
   replicas: 4
   selector:
     matchLabels:
@@ -12,17 +13,33 @@ spec:
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxSurge: 8
+      maxSurge: 2
+      maxUnavailable: 1
   template:
     metadata:
       labels:
         app: converter
     spec:
+      terminationGracePeriodSeconds: 60
       containers:
         - name: converter
-          image: sweasytech/converter
+          image: convertidor/converter:latest
+          imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
                 name: converter-configmap
             - secretRef:
                 name: converter-secret
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 2Gi
