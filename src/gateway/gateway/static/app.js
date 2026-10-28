@@ -284,6 +284,8 @@ function statusInfo(job) {
   if (job.status === "canceled") return ["Cancelado", "canceled"];
   if (job.canceling) return ["Cancelando…", "retry"];
   if (job.status === "queued" && job.error) return ["Reintentando", "retry"];
+  // Tras ffmpeg queda calcular la forma de onda y guardar el resultado.
+  if (job.status === "processing" && job.progress >= 100) return ["Finalizando…", ""];
   if (job.status === "processing") return [`Convirtiendo ${Math.round(job.progress)}%`, ""];
   return ["En cola", ""];
 }
