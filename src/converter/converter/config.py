@@ -10,6 +10,7 @@ class Config:
     mp3_queue: str = "mp3"
     max_attempts: int = 3
     retry_delay_ms: int = 5000
+    metrics_port: int = 9100
 
     @property
     def retry_queue(self) -> str:
@@ -29,4 +30,5 @@ class Config:
             mp3_queue=env("MP3_QUEUE", cls.mp3_queue),
             max_attempts=int(env("MAX_ATTEMPTS", cls.max_attempts)),
             retry_delay_ms=int(env("RETRY_DELAY_MS", cls.retry_delay_ms)),
+            metrics_port=int(env("METRICS_PORT", cls.metrics_port)),
         )

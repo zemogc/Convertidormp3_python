@@ -1,6 +1,6 @@
 # Convertidor de video a audio — microservicios en Python
 
-Sube un video y recibe el audio en MP3, M4A, OGG, Opus, FLAC o WAV. Puedes recortarlo, normalizar el volumen y ponerle título y artista. El progreso de la conversión se ve **en vivo** en el navegador, y si subes un archivo que ya se convirtió con las mismas opciones, el resultado sale **al instante** desde la caché.
+Sube uno o varios videos y recibe el audio en MP3, M4A, OGG, Opus, FLAC o WAV. Puedes recortarlo, normalizar el volumen y ponerle título y artista. El progreso de la conversión se ve **en vivo** en el navegador, puedes **cancelarla** a mitad de camino, escuchar el resultado sobre su **forma de onda** y, si subes un archivo que ya se convirtió con las mismas opciones, el resultado sale **al instante** desde la caché.
 
 ![Interfaz web](docs/screenshot.png)
 
@@ -8,12 +8,15 @@ Sube un video y recibe el audio en MP3, M4A, OGG, Opus, FLAC o WAV. Puedes recor
 
 | | |
 |---|---|
-| **Progreso en tiempo real** | El converter lee la salida `-progress` de ffmpeg, guarda el porcentaje en MongoDB y el gateway lo transmite por Server-Sent Events. Funciona con varias réplicas del gateway porque el estado vive en Mongo, no en memoria. |
-| **Caché por contenido** | La clave es `sha256(archivo + opciones)`. Mismo video y mismas opciones: no se encola nada, se reutiliza el audio existente. |
+| **Progreso en tiempo real** | El converter lee la salida `-progress` de ffmpeg, guarda el porcentaje en MongoDB y el gateway lo transmite por Server-Sent Events. Funciona con varias réplicas del gateway porque el estado vive en Mongo, no en memoria. Incluso para grabaciones `.webm` del navegador, que no traen duración: se mide recorriendo el audio sin decodificarlo. |
+| **Cancelación real** | Cancelar un trabajo en curso mata ffmpeg. El cierre es atómico: si la cancelación llega mientras se guarda el resultado, ese audio se descarta. |
+| **Forma de onda** | El converter calcula 160 picos del audio en streaming; la UI los dibuja como reproductor: clic para saltar, flechas para avanzar. |
+| **Caché por contenido** | La clave es `sha256(archivo + opciones)`. Mismo video y mismas opciones: no se encola nada, se reutiliza el audio existente. Borrar un trabajo no rompe las copias de caché de otros usuarios: el audio solo se elimina cuando nadie más lo usa. |
 | **Reintentos con espera y dead-letter queue** | Un fallo transitorio va a `video.retry`, una cola con TTL que devuelve el mensaje a `video` a los 5 s. Tras 3 intentos va a `video.dlq`. Los errores permanentes (archivo sin audio, formato inválido) no se reintentan. |
 | **Audio de calidad** | Normalización de sonoridad EBU R128 (−16 LUFS, el estándar de las plataformas de streaming), recorte con búsqueda rápida, etiquetas ID3. |
 | **Sin bloqueos de RabbitMQ** | La conversión corre en un hilo aparte para que pika siga respondiendo heartbeats; los videos largos no tumban la conexión. |
-| **Seguridad** | JWT con expiración, contraseñas con scrypt, login en tiempo constante (no se pueden enumerar usuarios), trabajos privados por usuario, contenedores sin root. |
+| **Seguridad y límites** | JWT con expiración, contraseñas con scrypt, login en tiempo constante (no se pueden enumerar usuarios), trabajos privados por usuario, máximo de conversiones activas por usuario (429), contenedores sin root. |
+| **Observabilidad** | Métricas Prometheus en gateway, converter y RabbitMQ, con un dashboard de Grafana listo para usar. |
 
 ## Arquitectura
 
@@ -56,6 +59,29 @@ docker compose up -d --build
 | http://localhost:8025 | Mailpit: aquí llegan los emails de notificación |
 | http://localhost:15672 | Panel de RabbitMQ (`guest` / `guest`) |
 
+### Con monitoreo
+
+```bash
+docker compose --profile monitoring up -d --build
+```
+
+Agrega Prometheus (http://localhost:9090) y Grafana (http://localhost:3000, sin login) con el dashboard **Convertidor** ya cargado:
+
+![Dashboard de Grafana](docs/grafana.png)
+
+| Métrica | Servicio | Qué mide |
+|---|---|---|
+| `converter_jobs_total{result}` | converter | Trabajos por resultado: `done`, `failed`, `canceled`, `retry` |
+| `converter_job_duration_seconds` | converter | Histograma de duración por intento |
+| `converter_jobs_in_progress` | converter | Conversiones corriendo ahora |
+| `converter_audio_seconds_total` | converter | Segundos de audio producidos |
+| `gateway_jobs_created_total{format,cached}` | gateway | Trabajos creados y aciertos de caché |
+| `gateway_jobs_rejected_total{reason}` | gateway | Rechazos por límite o cola caída |
+| `gateway_http_requests_total` / `_duration_seconds` | gateway | Tráfico y latencia por ruta (plantilla, no id: cardinalidad acotada) |
+| `rabbitmq_queue_messages_ready{queue}` | RabbitMQ | Mensajes esperando en `video`, `video.retry`, `video.dlq`, `mp3` |
+
+El gateway corre varios workers de gunicorn; las métricas usan el modo multiproceso de `prometheus_client` para que `/metrics` sume todos los procesos.
+
 Hay un usuario admin creado de fábrica (`admin@example.com` / `admin12345`), o crea tu cuenta desde la UI.
 
 ### Prueba de punta a punta
@@ -64,7 +90,7 @@ Hay un usuario admin creado de fábrica (`admin@example.com` / `admin12345`), o 
 python scripts/e2e.py
 ```
 
-Genera un video de 10 minutos con el ffmpeg del contenedor y comprueba el flujo completo: registro, subida con recorte y normalización, progreso intermedio por SSE, descarga con etiquetas ID3, caché instantánea, privacidad entre usuarios, error permanente sin reintentos y llegada del email.
+Genera un video de 10 minutos con el ffmpeg del contenedor y comprueba el flujo completo: registro, subida con recorte y normalización, progreso intermedio por SSE, forma de onda, descarga con etiquetas ID3, caché instantánea, privacidad entre usuarios, cancelación en curso, borrado sin romper la caché compartida, límite de conversiones activas, error permanente sin reintentos y llegada del email.
 
 ## API
 
@@ -80,6 +106,11 @@ Todas las rutas `/api/jobs*` requieren `Authorization: Bearer <token>`.
 | `GET` | `/api/jobs/<id>` | Estado de un trabajo |
 | `GET` | `/api/jobs/<id>/events` | Stream SSE con el progreso hasta que termina |
 | `GET` | `/api/jobs/<id>/download` | Descarga el audio |
+| `POST` | `/api/jobs/<id>/cancel` | 200 si estaba en cola, 202 si se está deteniendo ffmpeg, 409 si ya terminó |
+| `DELETE` | `/api/jobs/<id>` | 204. Los trabajos activos hay que cancelarlos antes (409) |
+| `GET` | `/metrics` | Métricas Prometheus |
+
+Si ya tienes `MAX_ACTIVE_JOBS` conversiones en cola o en proceso, `POST /api/jobs` responde **429** con `Retry-After`. Los resultados de caché no cuentan para el límite.
 
 Opciones de conversión (campos del formulario, todos opcionales):
 
@@ -150,6 +181,8 @@ Antes de usarlo en serio cambia los valores de ejemplo de los `secret.yaml` (sob
 | `MONGO_URI` | gateway, converter | `mongodb://localhost:27017` |
 | `RABBITMQ_HOST` | gateway, converter, notification | `localhost` |
 | `MAX_UPLOAD_MB` | gateway | `500` |
+| `MAX_ACTIVE_JOBS` | gateway | `5` |
+| `METRICS_PORT` | converter | `9100` |
 | `VIDEO_QUEUE`, `MP3_QUEUE` | gateway, converter, notification | `video`, `mp3` |
 | `MAX_ATTEMPTS` | converter, notification | `3`, `5` |
 | `RETRY_DELAY_MS` | converter | `5000` |

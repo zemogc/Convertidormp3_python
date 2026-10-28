@@ -4,6 +4,7 @@ import logging
 import threading
 
 import pika
+from prometheus_client import start_http_server
 from pymongo import MongoClient
 
 from .config import Config
@@ -33,6 +34,7 @@ def declare_queues(channel, config: Config) -> None:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     config = Config.from_env()
+    start_http_server(config.metrics_port)
     mongo = MongoClient(config.mongo_uri, tz_aware=True)
     worker = Worker(GridStorage(mongo), MongoJobs(mongo), config)
 

@@ -5,7 +5,7 @@ import tempfile
 import time
 from collections.abc import Callable
 
-from . import ffmpeg
+from . import ffmpeg, metrics
 from .config import Config
 
 log = logging.getLogger(__name__)
@@ -51,19 +51,25 @@ class Worker:
             return
         attempt = job["attempts"]
         log.info("Trabajo %s: intento %d/%d", job_id, attempt, self.config.max_attempts)
+        started = time.perf_counter()
         try:
-            self._convert(job)
+            with metrics.IN_PROGRESS.track_inprogress():
+                self._convert(job)
         except ffmpeg.Canceled:
+            metrics.JOBS.labels("canceled").inc()
             self._canceled(job)
             return
         except ffmpeg.PermanentError as err:
+            metrics.JOBS.labels("failed").inc()
             self._fail(job, str(err), message, publish)
             return
         except Exception as err:
             log.exception("Trabajo %s fallo en el intento %d", job_id, attempt)
             if attempt >= self.config.max_attempts:
+                metrics.JOBS.labels("failed").inc()
                 self._fail(job, f"fallo tras {attempt} intentos: {err}", message, publish)
             else:
+                metrics.JOBS.labels("retry").inc()
                 self.jobs.update(
                     job_id,
                     status="queued",
@@ -72,6 +78,9 @@ class Worker:
                 )
                 publish(self.config.retry_queue, message)
             return
+        finally:
+            metrics.DURATION.observe(time.perf_counter() - started)
+        metrics.JOBS.labels("done").inc()
 
         try:
             publish(
@@ -120,6 +129,7 @@ class Worker:
         if not finished:
             self.storage.delete_output(output_fid)
             raise ffmpeg.Canceled()
+        metrics.AUDIO_SECONDS.inc(duration)
         # El video original ya no hace falta: libera espacio en GridFS.
         try:
             self.storage.delete_video(job["video_fid"])

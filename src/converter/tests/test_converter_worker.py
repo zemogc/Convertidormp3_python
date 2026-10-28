@@ -1,6 +1,7 @@
 import json
 
 import pytest
+from prometheus_client import REGISTRY
 
 from converter.config import Config
 from converter.ffmpeg import PermanentError
@@ -256,3 +257,22 @@ def test_cancel_right_before_finishing_discards_the_output():
     assert jobs.doc["status"] == "canceled"
     assert storage.outputs == {}  # el audio subido se borra
     assert published == []
+
+
+def metric(name, **labels):
+    return REGISTRY.get_sample_value(name, labels) or 0.0
+
+
+def test_metrics_count_results():
+    before = {r: metric("converter_jobs_total", result=r) for r in ("done", "retry")}
+    audio_before = metric("converter_audio_seconds_total")
+    runs_before = metric("converter_job_duration_seconds_count")
+
+    run(FakeJobs(), FakeFfmpeg(duration=12.5))
+    run(FakeJobs(), FakeFfmpeg(fail=RuntimeError("boom")))
+
+    assert metric("converter_jobs_total", result="done") == before["done"] + 1
+    assert metric("converter_jobs_total", result="retry") == before["retry"] + 1
+    assert metric("converter_audio_seconds_total") == audio_before + 12.5
+    assert metric("converter_job_duration_seconds_count") == runs_before + 2
+    assert metric("converter_jobs_in_progress") == 0

@@ -12,4 +12,5 @@ COPY . .
 
 RUN useradd --create-home --uid 10001 app
 USER app
+EXPOSE 9100
 CMD ["python", "-m", "converter.consumer"]

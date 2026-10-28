@@ -191,3 +191,19 @@ def test_cancel_kills_ffmpeg(tmp_path):
         except OSError:
             pass
     assert alive == []
+
+
+@needs_ffmpeg
+def test_probe_measures_streamed_files_without_duration(tmp_path):
+    # Matroska escrito por pipe: igual que un .webm grabado en el navegador.
+    data = subprocess.run(
+        [
+            "ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "sine=duration=7",
+            "-f", "matroska", "pipe:1",
+        ],
+        check=True,
+        capture_output=True,
+    ).stdout  # fmt: skip
+    video = tmp_path / "streamed.mkv"
+    video.write_bytes(data)
+    assert ffmpeg.probe(str(video)) == pytest.approx(7.0, abs=0.1)
