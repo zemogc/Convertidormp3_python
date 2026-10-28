@@ -89,10 +89,21 @@
         <div class="meta muted"></div>
         <div class="bar"><div class="fill"></div></div>
         <p class="error job-error"></p>
-        <audio controls preload="none" hidden></audio>
+        <div class="player" hidden>
+          <button class="play-toggle" type="button" aria-label="Reproducir">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path class="icon-play" d="M8 5v14l11-7z"/><path class="icon-pause" d="M7 5h4v14H7zm6 0h4v14h-4z"/></svg>
+          </button>
+          <svg class="wave" tabindex="0" role="slider" aria-label="Posicion de reproduccion"
+               aria-valuemin="0" preserveAspectRatio="none">
+            <defs><clipPath><rect class="played-area" x="0" y="0" width="0" height="40"/></clipPath></defs>
+            <g class="bars"></g>
+            <g class="bars played"></g>
+          </svg>
+          <span class="time muted"></span>
+          <audio preload="none"></audio>
+        </div>
       </div>
       <div class="job-actions">
-        <button class="ghost play" type="button" hidden>Escuchar</button>
         <button class="primary download" type="button" hidden>Descargar</button>
       </div>
     </li>

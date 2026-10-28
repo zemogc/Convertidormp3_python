@@ -267,7 +267,6 @@ function renderJob(job) {
   el.id = `job-${job.id}`;
   updateJob(el, job);
   el.querySelector(".download").addEventListener("click", () => download(job.id, el));
-  el.querySelector(".play").addEventListener("click", () => preview(job.id, el));
   return el;
 }
 
@@ -303,7 +302,7 @@ function updateJob(el, job) {
 
   const done = job.status === "done";
   el.querySelector(".download").hidden = !done;
-  el.querySelector(".play").hidden = !done || !el.querySelector("audio").hidden;
+  if (done) setupPlayer(el, job);
 }
 
 // Progreso en vivo: el endpoint es SSE, pero se lee con fetch para poder
@@ -370,19 +369,119 @@ async function download(id, el) {
   }
 }
 
-async function preview(id, el) {
-  const button = el.querySelector(".play");
-  button.disabled = true;
-  try {
-    const audio = el.querySelector("audio");
-    audio.src = await fetchAudio(id);
-    audio.hidden = false;
-    button.hidden = true;
-    audio.play().catch(() => {});
-  } catch (err) {
-    el.querySelector(".job-error").textContent = err.message;
-    button.disabled = false;
-  }
+// ---------- reproductor con forma de onda ----------
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+const WAVE_HEIGHT = 40;
+let nowPlaying = null;
+
+function drawBars(group, peaks) {
+  peaks.forEach((peak, i) => {
+    const h = Math.max(1.5, peak * WAVE_HEIGHT);
+    const bar = document.createElementNS(SVG_NS, "rect");
+    bar.setAttribute("x", i + 0.15);
+    bar.setAttribute("width", 0.7);
+    bar.setAttribute("y", (WAVE_HEIGHT - h) / 2);
+    bar.setAttribute("height", h);
+    group.append(bar);
+  });
+}
+
+function setupPlayer(el, job) {
+  const player = el.querySelector(".player");
+  if (player.dataset.ready) return;
+  player.dataset.ready = "1";
+  player.hidden = false;
+
+  // Trabajos anteriores a la forma de onda: barra plana, el reproductor funciona igual.
+  const peaks = job.waveform?.length ? job.waveform : Array(80).fill(0.1);
+  const wave = player.querySelector(".wave");
+  const clipId = `clip-${job.id}`;
+  wave.setAttribute("viewBox", `0 0 ${peaks.length} ${WAVE_HEIGHT}`);
+  wave.querySelector("clipPath").id = clipId;
+  wave.querySelector(".played").setAttribute("clip-path", `url(#${clipId})`);
+  wave.querySelectorAll(".bars").forEach((g) => drawBars(g, peaks));
+
+  const audio = player.querySelector("audio");
+  const button = player.querySelector(".play-toggle");
+  const area = wave.querySelector(".played-area");
+  const time = player.querySelector(".time");
+  const total = () => (Number.isFinite(audio.duration) && audio.duration) || job.duration || 0;
+
+  const paint = () => {
+    const t = total();
+    area.setAttribute("width", t ? (audio.currentTime / t) * peaks.length : 0);
+    time.textContent = `${formatDuration(audio.currentTime)} / ${formatDuration(t)}`;
+    wave.setAttribute("aria-valuenow", Math.round(audio.currentTime));
+    wave.setAttribute("aria-valuemax", Math.round(t));
+  };
+  const loop = () => {
+    paint();
+    if (!audio.paused) requestAnimationFrame(loop);
+  };
+  paint();
+
+  const ensureLoaded = async () => {
+    if (audio.src) return;
+    button.classList.add("loading");
+    try {
+      const url = await fetchAudio(job.id);
+      await new Promise((resolve, reject) => {
+        audio.addEventListener("loadedmetadata", resolve, { once: true });
+        audio.addEventListener("error", () => reject(new Error("No se pudo cargar el audio")), { once: true });
+        audio.src = url;
+      });
+    } finally {
+      button.classList.remove("loading");
+    }
+  };
+
+  const play = async () => {
+    try {
+      await ensureLoaded();
+      if (nowPlaying && nowPlaying !== audio) nowPlaying.pause();
+      nowPlaying = audio;
+      await audio.play();
+    } catch (err) {
+      el.querySelector(".job-error").textContent = err.message;
+    }
+  };
+
+  const seekTo = async (seconds) => {
+    await ensureLoaded();
+    audio.currentTime = Math.min(Math.max(seconds, 0), total());
+    paint();
+  };
+
+  button.addEventListener("click", () => (audio.paused ? play() : audio.pause()));
+  audio.addEventListener("play", () => {
+    player.classList.add("playing");
+    button.setAttribute("aria-label", "Pausar");
+    requestAnimationFrame(loop);
+  });
+  ["pause", "ended"].forEach((ev) =>
+    audio.addEventListener(ev, () => {
+      player.classList.remove("playing");
+      button.setAttribute("aria-label", "Reproducir");
+      paint();
+    }),
+  );
+
+  wave.addEventListener("click", async (e) => {
+    const rect = wave.getBoundingClientRect();
+    await seekTo(((e.clientX - rect.left) / rect.width) * total());
+    if (audio.paused) play();
+  });
+  wave.addEventListener("keydown", (e) => {
+    const step = { ArrowRight: 5, ArrowLeft: -5 }[e.key];
+    if (step) {
+      e.preventDefault();
+      seekTo(audio.currentTime + step);
+    } else if (e.key === " " || e.key === "Enter") {
+      e.preventDefault();
+      button.click();
+    }
+  });
 }
 
 // Enlace del email: /#job-<id> resalta ese trabajo.

@@ -172,6 +172,7 @@ def create_app(
                 output_fid=hit["output_fid"],
                 output_size=hit.get("output_size"),
                 duration=hit.get("duration"),
+                waveform=hit.get("waveform"),
             )
             jobs.create(job)
             return jsonify(_public(job)), 200
@@ -288,6 +289,7 @@ def _public(job: dict) -> dict:
         "options": job["options"],
         "output_size": job.get("output_size"),
         "duration": job.get("duration"),
+        "waveform": job.get("waveform"),
         "cached": job.get("cached", False),
         "error": job.get("error"),
         "created_at": job["created_at"].isoformat(),
