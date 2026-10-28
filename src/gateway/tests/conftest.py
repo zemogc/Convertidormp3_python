@@ -92,6 +92,13 @@ class FakeJobs:
             return "canceling"
         return None
 
+    def count_active(self, owner):
+        return sum(
+            1
+            for j in self.docs.values()
+            if j["owner"] == owner and j["status"] in ("queued", "processing")
+        )
+
     def delete(self, job_id):
         del self.docs[job_id]
 
@@ -124,7 +131,7 @@ def deps():
 
 @pytest.fixture
 def app(deps):
-    config = Config(max_upload_mb=1, sse_poll_seconds=0.01, sse_max_seconds=2)
+    config = Config(max_upload_mb=1, max_active_jobs=3, sse_poll_seconds=0.01, sse_max_seconds=2)
     return create_app(config, **deps)
 
 

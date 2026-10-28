@@ -219,3 +219,35 @@ def test_delete_keeps_audio_shared_with_cached_jobs(client, deps, ana, beto, upl
 
     client.delete(f"/api/jobs/{copy['id']}", headers=beto)
     assert deps["storage"].outputs == {}  # ultimo en usarlo: se borra
+
+
+def test_active_jobs_limit(client, deps, ana, beto, upload):
+    for i in range(3):
+        assert upload(ana, data=f"v{i}".encode()).status_code == 202
+    resp = upload(ana, data=b"v-extra")
+    assert resp.status_code == 429
+    assert resp.headers["Retry-After"] == "10"
+    assert upload(beto, data=b"v-extra").status_code == 202  # el limite es por usuario
+
+    # Al terminar uno se libera un lugar
+    first = next(iter(deps["jobs"].docs))
+    finish(deps, first)
+    assert upload(ana, data=b"v-extra").status_code == 202
+
+
+def test_cache_hits_skip_the_limit(client, deps, ana, upload):
+    done = upload(ana, data=b"popular").json
+    finish(deps, done["id"])
+    for i in range(3):
+        upload(ana, data=f"v{i}".encode())
+    assert upload(ana, data=b"popular").status_code == 200
+
+
+def test_metrics_endpoint(client, ana, upload):
+    upload(ana, format="ogg")
+    client.get("/api/jobs/no-existe", headers=ana)
+    text = client.get("/metrics").get_data(as_text=True)
+    assert 'gateway_jobs_created_total{cached="false",format="ogg"}' in text
+    # La ruta va como plantilla, no con el id: cardinalidad acotada.
+    assert 'endpoint="/api/jobs/<job_id>",method="GET",status="404"' in text
+    assert "no-existe" not in text
