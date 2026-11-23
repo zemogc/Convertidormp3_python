@@ -11,7 +11,7 @@ def test_parse_time(raw, expected):
     assert parse_time(raw) == expected
 
 
-@pytest.mark.parametrize("raw", ["", "abc", "1:2:3:4", "-5", "1:"])
+@pytest.mark.parametrize("raw", ["", "abc", "1:2:3:4", "-5", "1:", "1:75", "1:60:00", "0:60"])
 def test_parse_time_rejects_garbage(raw):
     with pytest.raises(OptionsError):
         parse_time(raw)

@@ -28,6 +28,9 @@ def parse_time(value: str) -> float:
         raise OptionsError(f"tiempo invalido: {value!r}")
     a, b, seconds = match.groups()
     hours, minutes = (a, b) if b is not None else (None, a)
+    # Solo los segundos sueltos ("90") pueden pasar de 59; "1:75" es un error de tipeo.
+    if (minutes is not None and float(seconds) >= 60) or (hours is not None and int(minutes) >= 60):
+        raise OptionsError(f"tiempo invalido: {value!r} (minutos y segundos van de 0 a 59)")
     total = float(seconds) + int(minutes or 0) * 60 + int(hours or 0) * 3600
     return round(total, 3)
 
