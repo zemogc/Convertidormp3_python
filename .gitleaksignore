@@ -1,0 +1,6 @@
+# Falsos positivos revisados a mano el 2026-11-25. Cada linea es la huella exacta de un hallazgo;
+# un secreto nuevo NO queda cubierto y hace fallar el CI.
+# README: ejemplo de curl con la cuenta demo del docker-compose local (admin@example.com).
+fb7eebb663320c73641b8e16fecbbff604c72255:README.md:curl-auth-user:94
+# Pruebas: clave HS256 fija solo para firmar tokens dentro de la suite.
+bd26c341e5b1d438b489072b988bfcba836fe06d:src/auth/tests/test_auth.py:generic-api-key:9
