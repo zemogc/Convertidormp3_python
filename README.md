@@ -4,6 +4,7 @@
 
 **Microservicios en Python que convierten videos a MP3, M4A, OGG, Opus, FLAC o WAV — con progreso en vivo, forma de onda interactiva, caché por contenido y observabilidad completa.**
 
+[![CI](https://github.com/zemogc/Convertidormp3_python/actions/workflows/ci.yml/badge.svg)](https://github.com/zemogc/Convertidormp3_python/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![Flask](https://img.shields.io/badge/Flask-3.0-000000?logo=flask&logoColor=white)
 ![FFmpeg](https://img.shields.io/badge/FFmpeg-007808?logo=ffmpeg&logoColor=white)
@@ -330,7 +331,7 @@ python -m venv .venv
 .venv/Scripts/activate          # Windows  (Linux/macOS: source .venv/bin/activate)
 pip install -r requirements-dev.txt
 
-pytest                          # 97 tests unitarios, sin Docker
+pytest                          # 105 tests unitarios, sin Docker (5 requieren ffmpeg)
 ruff check src scripts          # estilo
 ```
 
